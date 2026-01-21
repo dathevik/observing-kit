@@ -1,0 +1,49 @@
+# Exclude observation data directories
+QSO_followup/NTT/
+QSO_followup/Palomar/
+QSO_followup/Gemini_South/
+QSO_followup/confirmed_Mkrtchyan/
+QSO_followup/radio_galaxy_candidates?/
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Generated images
+*.png
+*.jpg
+*.jpeg
+*.pdf
+
+# Data files
+*.fits
+*.fits.gz
+*.dat
+*.csv
+*.txt
+*.zip
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
