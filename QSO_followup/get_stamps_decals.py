@@ -16,6 +16,7 @@ except ImportError:
 
 
 from astropy.io import ascii, fits
+from astropy.table import Table
 
 imgdic = {'first':'firstimage',
           'vla_stripe82':'stripe82image'}
@@ -132,7 +133,7 @@ def parse_arguments():
         epilog=EXAMPLES)
 
     parser.add_argument('-i','--input', required=True, type=str, 
-                            help='ASCII file (.dat) containing\
+                            help='Input file (FITS or ASCII) containing\
                             the target coordinates and name\
 		            in columns: ra, dec, ls_id' )
 
@@ -156,48 +157,67 @@ def parse_arguments():
 if __name__ == '__main__':
     args=parse_arguments()
     
-    # Read ASCII file using astropy
-    # Handle files with comment header lines (starting with #)
-    try:
-        # Read the first line to check if it's a comment header
-        with open(args.input, 'r') as f:
-            first_line = f.readline().strip()
-        
-        if first_line.startswith('#'):
-            # Extract column names from comment line
-            header_line = first_line.lstrip('#').strip()
-            col_names = header_line.split()
-            # Remove trailing commas from column names
-            col_names = [name.rstrip(',') for name in col_names]
-            
-            # Read data without header, then set column names
-            data = ascii.read(args.input, format='basic', header_start=None, data_start=1, comment='#')
-            
-            # Rename columns if we have the right number
-            if len(col_names) == len(data.colnames):
-                data.rename_columns(data.colnames, col_names)
-            else:
-                print("Warning: Number of header columns ({0}) doesn't match data columns ({1})".format(
-                    len(col_names), len(data.colnames)))
-                print("Header columns:", col_names)
-                print("Data columns:", data.colnames)
-        else:
-            # No comment header, try normal reading
-            data = ascii.read(args.input)
-    except Exception as e1:
-        # If auto-detection fails, try common formats
+    # Read input file - handle both FITS and ASCII files
+    if args.input.endswith('.fits') or args.input.endswith('.fit'):
+        # Read FITS file
         try:
-            data = ascii.read(args.input, format='basic')
-        except Exception as e2:
+            fits_data = fits.getdata(args.input, ext=0)
+            data = Table(fits_data)
+        except Exception as e1:
             try:
-                data = ascii.read(args.input, format='fixed_width')
-            except Exception as e3:
-                print("Error reading input file {0}".format(args.input))
-                print("Primary error: {0}".format(e1))
-                print("Basic format error: {0}".format(e2))
-                print("Fixed-width error: {0}".format(e3))
+                # Try extension 1 if extension 0 fails
+                print("No data in HDU 0, trying HDU 1...")
+                fits_data = fits.getdata(args.input, ext=1)
+                data = Table(fits_data)
+            except Exception as e2:
+                print("Error reading FITS file {0}".format(args.input))
+                print("Extension 0 error: {0}".format(e1))
+                print("Extension 1 error: {0}".format(e2))
                 import sys
                 sys.exit(1)
+    else:
+        # Read ASCII file using astropy
+        # Handle files with comment header lines (starting with #)
+        try:
+            # Read the first line to check if it's a comment header
+            with open(args.input, 'r') as f:
+                first_line = f.readline().strip()
+            
+            if first_line.startswith('#'):
+                # Extract column names from comment line
+                header_line = first_line.lstrip('#').strip()
+                col_names = header_line.split()
+                # Remove trailing commas from column names
+                col_names = [name.rstrip(',') for name in col_names]
+                
+                # Read data without header, then set column names
+                data = ascii.read(args.input, format='basic', header_start=None, data_start=1, comment='#')
+                
+                # Rename columns if we have the right number
+                if len(col_names) == len(data.colnames):
+                    data.rename_columns(data.colnames, col_names)
+                else:
+                    print("Warning: Number of header columns ({0}) doesn't match data columns ({1})".format(
+                        len(col_names), len(data.colnames)))
+                    print("Header columns:", col_names)
+                    print("Data columns:", data.colnames)
+            else:
+                # No comment header, try normal reading
+                data = ascii.read(args.input)
+        except Exception as e1:
+            # If auto-detection fails, try common formats
+            try:
+                data = ascii.read(args.input, format='basic')
+            except Exception as e2:
+                try:
+                    data = ascii.read(args.input, format='fixed_width')
+                except Exception as e3:
+                    print("Error reading input file {0}".format(args.input))
+                    print("Primary error: {0}".format(e1))
+                    print("Basic format error: {0}".format(e2))
+                    print("Fixed-width error: {0}".format(e3))
+                    import sys
+                    sys.exit(1)
     
     # Handle different column name cases
     ra, dec = get_coordinates(data)

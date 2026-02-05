@@ -14,6 +14,9 @@ from subprocess import call
 
 from astropy.io import ascii, fits
 from astropy.table import Table
+import sys
+# Add NTT directory to path to import lsdlib
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'NTT'))
 from lsdlib import read_input
 
 from astropy.visualization import PercentileInterval, AsinhStretch

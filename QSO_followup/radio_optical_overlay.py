@@ -11,7 +11,7 @@ from astropy import units as u
 from astropy.wcs import WCS
 from astropy.nddata import Cutout2D
 try:
-from reproject import reproject_interp
+    from reproject import reproject_interp
 except ImportError:
     raise ImportError("The 'reproject' module is required. Please install it with: pip install reproject")
 from matplotlib import gridspec
@@ -20,11 +20,15 @@ from matplotlib.patches import Ellipse
 from astropy.wcs.utils import proj_plane_pixel_scales
 
 
-def create_radio_optical_overlay(radio_filenames, optical_filenames, coords_source, fig_savename, image_size_asec = 60.):
+def create_radio_optical_overlay(radio_filenames, optical_filenames, coords_source, fig_savename, image_size_asec = 60., optical_label = None, ls_id = None):
 
 	# Create a larger figure - one subplot per source, arranged vertically
 	num_sources = len(radio_filenames)
 	f = plt.figure(figsize=(24, 8*num_sources))
+	
+	# Add figure title with ls_id if provided
+	if ls_id is not None:
+		f.suptitle('ls_id: {0}'.format(ls_id), fontsize=18, fontweight='bold', y=0.995)
 	
 	# Create subplots - one row per source, showing optical, radio, and overlay (3 columns)
 	gs1 = gridspec.GridSpec(num_sources, 3, figure=f, width_ratios=[1, 1, 1], hspace=0.3, wspace=0.25)
@@ -35,7 +39,7 @@ def create_radio_optical_overlay(radio_filenames, optical_filenames, coords_sour
 		# Open radio data
 		radio_cut = fits.open(radio_file)
 		radio_data = np.squeeze(radio_cut[0].data)  # Remove any extra dimensions
-    	wcs_radio_cut = WCS(radio_cut[0].header, naxis=2)
+		wcs_radio_cut = WCS(radio_cut[0].header, naxis=2)
 
 		# Open optical data
 		opt_cut = fits.open(optical_filenames[i])
@@ -126,7 +130,10 @@ def create_radio_optical_overlay(radio_filenames, optical_filenames, coords_sour
 		# Left panel: Optical image only
 		Ax_opt = f.add_subplot(gs1[i, 0], projection=lae1_optical.wcs)
 		Ax_opt.imshow(lae1_optical.data, vmin=-1*rms_opt, vmax=5*rms_opt, cmap='Greys', origin='lower')
-		Ax_opt.set_title('Optical (DECaLS)', fontsize=14, pad=10)
+		# Use provided label or default to DECaLS
+		if optical_label is None:
+			optical_label = 'DECaLS'
+		Ax_opt.set_title('Optical ({0})'.format(optical_label), fontsize=14, pad=10)
 		
 		lon_opt = Ax_opt.coords[0]
 		lat_opt = Ax_opt.coords[1]
@@ -188,6 +195,22 @@ def create_radio_optical_overlay(radio_filenames, optical_filenames, coords_sour
 	plt.savefig(fig_savename, dpi=300, format='png', bbox_inches='tight')
 	print("Saved overlay image: {0}".format(fig_savename))
 	plt.close()  # Close the figure to free memory
+
+
+def get_optical_label_from_filename(filename):
+	'''
+	Determine the optical survey label from the filename.
+	- If filename contains '_ps1', return 'PanSTARRS'
+	- If filename contains 'decals', return 'DECALS'
+	- Otherwise, return 'DECaLS' (default)
+	'''
+	filename_lower = filename.lower()
+	if '_ps1' in filename_lower:
+		return 'PanSTARRS'
+	elif 'decals' in filename_lower:
+		return 'DECALS'
+	else:
+		return 'DECaLS'
 
 
 def get_coordinates(d):
@@ -281,8 +304,8 @@ def parse_arguments():
     parser.add_argument('-i', '--input', required=True, type=str,
                         help='Input table file (e.g., observations_gemini.dat)')
     
-    parser.add_argument('--ls-id', required=True, type=str, nargs='+',
-                        help='ls_id(s) of source(s) to process (can specify multiple)')
+    parser.add_argument('--ls-id', required=False, type=str, nargs='+',
+                        help='ls_id(s) of source(s) to process (can specify multiple). If not provided, processes all sources in the input file.')
     
     parser.add_argument('--racs-base-folder', required=False, type=str,
                         default='Gemini_South/stamps_racs',
@@ -310,22 +333,41 @@ def parse_arguments():
 if __name__ == '__main__':
     args = parse_arguments()
     
-    # Read input table
-    try:
-        data = ascii.read(args.input)
-    except Exception as e1:
+    # Read input table - handle both FITS and ASCII files
+    if args.input.endswith('.fits') or args.input.endswith('.fit'):
+        # Read FITS file
         try:
-            data = ascii.read(args.input, format='basic')
-        except Exception as e2:
+            fits_data = fits.getdata(args.input, ext=0)
+            data = Table(fits_data)
+        except Exception as e1:
             try:
-                data = ascii.read(args.input, format='fixed_width')
-            except Exception as e3:
-                print("Error reading input file {0}".format(args.input))
-                print("Auto-detection error: {0}".format(e1))
-                print("Space-separated error: {0}".format(e2))
-                print("Fixed-width error: {0}".format(e3))
+                # Try extension 1 if extension 0 fails
+                print("No data in HDU 0, trying HDU 1...")
+                fits_data = fits.getdata(args.input, ext=1)
+                data = Table(fits_data)
+            except Exception as e2:
+                print("Error reading FITS file {0}".format(args.input))
+                print("Extension 0 error: {0}".format(e1))
+                print("Extension 1 error: {0}".format(e2))
                 import sys
                 sys.exit(1)
+    else:
+        # Read ASCII file
+        try:
+            data = ascii.read(args.input)
+        except Exception as e1:
+            try:
+                data = ascii.read(args.input, format='basic')
+            except Exception as e2:
+                try:
+                    data = ascii.read(args.input, format='fixed_width')
+                except Exception as e3:
+                    print("Error reading input file {0}".format(args.input))
+                    print("Auto-detection error: {0}".format(e1))
+                    print("Space-separated error: {0}".format(e2))
+                    print("Fixed-width error: {0}".format(e3))
+                    import sys
+                    sys.exit(1)
     
     # Get columns
     ra, dec = get_coordinates(data)
@@ -334,9 +376,29 @@ if __name__ == '__main__':
     # Convert ls_id column to strings for matching
     ls_id_col_str = [str(x) for x in ls_id_col]
     
+    # Determine which ls_ids to process
+    if args.ls_id is None:
+        # Process all unique ls_ids in the input file
+        ls_ids_to_process = sorted(list(set(ls_id_col_str)))
+        print("=" * 60)
+        print("Processing all sources in input file")
+        print("Found {0} unique ls_id(s) to process".format(len(ls_ids_to_process)))
+        print("=" * 60)
+    else:
+        # Process only specified ls_ids
+        ls_ids_to_process = [str(x) for x in args.ls_id]
+        print("=" * 60)
+        print("Processing {0} specified ls_id(s)".format(len(ls_ids_to_process)))
+        print("=" * 60)
+    
+    # Track processing statistics
+    successful = 0
+    failed = 0
+    skipped = 0
+    
     # Find matching rows for specified ls_ids
     # Process each ls_id separately to create individual overlay files
-    for ls_id_query in args.ls_id:
+    for ls_id_query in ls_ids_to_process:
         radio_filenames = []
         optical_filenames = []
         coords_source = []
@@ -348,6 +410,7 @@ if __name__ == '__main__':
             idx = ls_id_col_str.index(ls_id_query_str)
         except ValueError:
             print("Warning: ls_id {0} not found in table {1}".format(ls_id_query, args.input))
+            skipped += 1
             continue
         
         # Get coordinates
@@ -371,47 +434,103 @@ if __name__ == '__main__':
                     print("Warning: Radio folder not found: {0}".format(radio_folder))
                     print("  Also tried: {0}".format(alt_folder))
                     print("  Searched in base folder: {0}".format(args.racs_base_folder))
+                    skipped += 1
                     continue
             else:
                 print("Warning: Radio folder not found: {0}".format(radio_folder))
                 print("  Searched in base folder: {0}".format(args.racs_base_folder))
+                skipped += 1
                 continue
         
         print("Using radio folder: {0}".format(radio_folder))
         
-        # Find radio file - always use the first one if multiple found
+        # Find all radio files
         radio_files = find_files_by_ls_id(radio_folder, ls_id_query, pattern=args.radio_pattern)
         if len(radio_files) == 0:
             print("Warning: No radio file found for ls_id {0} in {1}".format(ls_id_query, radio_folder))
             print("  Searched for pattern: {0}{1}".format(ls_id_query, args.radio_pattern))
+            skipped += 1
             continue
         
-        # Always use the first file (sorted by find_files_by_ls_id)
-        if len(radio_files) > 1:
-            print("Info: Multiple radio files found for ls_id {0}, using first: {1}".format(ls_id_query, radio_files[0]))
-            print("  Other files found: {0}".format(radio_files[1:]))
-        radio_filenames.append(radio_files[0])
+        print("Found {0} radio file(s) for ls_id {1}".format(len(radio_files), ls_id_query))
         
-        # Find optical file
-        optical_files = find_files_by_ls_id(args.optical_folder, ls_id_query, pattern=args.optical_pattern)
-        if len(optical_files) == 0:
-            print("Warning: No optical file found for ls_id {0} in {1}".format(ls_id_query, args.optical_folder))
-            print("  Searched for pattern: {0}{1}".format(ls_id_query, args.optical_pattern))
-            continue
-        elif len(optical_files) > 1:
-            print("Warning: Multiple optical files found for ls_id {0}, using first: {1}".format(ls_id_query, optical_files[0]))
-        optical_filenames.append(optical_files[0])
+        # Find optical file - handle both folder and direct file path
+        if os.path.isfile(args.optical_folder):
+            # If optical_folder is actually a file, use it directly
+            print("Using optical file directly: {0}".format(args.optical_folder))
+            optical_file_path = args.optical_folder
+        else:
+            # Otherwise, search in the folder
+            optical_files = find_files_by_ls_id(args.optical_folder, ls_id_query, pattern=args.optical_pattern)
+            if len(optical_files) == 0:
+                print("Warning: No optical file found for ls_id {0} in {1}".format(ls_id_query, args.optical_folder))
+                print("  Searched for pattern: {0}{1}".format(ls_id_query, args.optical_pattern))
+                skipped += 1
+                continue
+            elif len(optical_files) > 1:
+                print("Warning: Multiple optical files found for ls_id {0}, using first: {1}".format(ls_id_query, optical_files[0]))
+            optical_file_path = optical_files[0]
         
-        print("Found files for ls_id {0}:".format(ls_id_query))
-        print("  Radio: {0}".format(radio_files[0]))
-        print("  Optical: {0}".format(optical_files[0]))
-        print("  Coordinates: RA={1:.6f} deg, DEC={2:.6f} deg".format(ls_id_query, ra_i, dec_i))
+        print("  Optical: {0}".format(optical_file_path))
+        print("  Coordinates: RA={0:.6f} deg, DEC={1:.6f} deg".format(ra_i, dec_i))
         
-        # Generate output filename automatically
-        output_filename = "overlay_{0}.png".format(ls_id_query_str)
+        # Create output directory
+        output_dir = "{0}_overlay".format(ls_id_query_str)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            print("Created output directory: {0}".format(output_dir))
         
-        print("\nCreating overlay for ls_id {0}...".format(ls_id_query))
-        create_radio_optical_overlay(radio_filenames, optical_filenames, coords_source, 
-                                     output_filename, image_size_asec=args.image_size)
-        print("Saved: {0}".format(output_filename))
+        # Process each radio file
+        for radio_file in radio_files:
+            # Extract survey type and index from filename
+            # Format: {ls_id}_{survey}_{index}.fits or {ls_id}_{survey}.fits
+            radio_basename = os.path.basename(radio_file)
+            # Remove .fits extension and ls_id prefix
+            name_part = radio_basename.replace('.fits', '').replace(ls_id_query_str + '_', '')
+            
+            # Extract survey type (RACS-High, RACS-Mid, RACS-Low) and index
+            if '_' in name_part:
+                parts = name_part.split('_')
+                survey_type = parts[0]  # e.g., RACS-High
+                index = parts[1] if len(parts) > 1 else '0'
+            else:
+                survey_type = name_part
+                index = '0'
+            
+            # Convert survey type to lowercase and remove RACS- prefix for filename
+            survey_short = survey_type.replace('RACS-', '').lower()
+            
+            # Generate output filename
+            output_filename = os.path.join(output_dir, "{0}_overlay_{1}{2}.png".format(ls_id_query_str, survey_short, index))
+            
+            print("\nProcessing: {0}".format(radio_basename))
+            print("  Creating overlay: {0}".format(output_filename))
+            
+            # Determine optical label from filename
+            optical_label = get_optical_label_from_filename(optical_file_path)
+            
+            # Create overlay for this radio file
+            try:
+                create_radio_optical_overlay([radio_file], [optical_file_path], [coords_source[0]], 
+                                             output_filename, image_size_asec=args.image_size, 
+                                             optical_label=optical_label, ls_id=ls_id_query_str)
+                print("  Saved: {0}".format(output_filename))
+                successful += 1
+            except Exception as e:
+                print("  Error creating overlay: {0}".format(e))
+                failed += 1
+        
+        # Mark this ls_id as processed if at least one overlay was created
+        if len(radio_files) > 0 and successful > 0:
+            print("\nCompleted processing ls_id: {0}".format(ls_id_query_str))
+    
+    # Print summary
+    print("\n" + "=" * 60)
+    print("PROCESSING SUMMARY")
+    print("=" * 60)
+    print("Total ls_ids to process: {0}".format(len(ls_ids_to_process)))
+    print("Successfully processed: {0}".format(successful))
+    print("Failed: {0}".format(failed))
+    print("Skipped (missing files/folders): {0}".format(skipped))
+    print("=" * 60)
 
